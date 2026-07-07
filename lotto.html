@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>로또 번호 생성기 & 당첨 확인</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2f3a;
+    --text: #e8eaed;
+    --muted: #9aa4b2;
+    --accent: #5b8cff;
+    --good: #4cd964;
+    --bad: #ff5c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, Roboto, sans-serif;
+    padding: 24px;
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  h3 { margin-top: 0; font-size: 15px; }
+  .ball-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .ball {
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 700;
+  }
+  .ball.mini { width: 30px; height: 30px; font-size: 12px; }
+  .plus { color: var(--muted); font-size: 18px; margin: 0 2px; }
+  .prize-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+  .prize-stat {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    flex: 1 1 160px;
+  }
+  .prize-stat .label { color: var(--muted); font-size: 12px; }
+  .prize-stat .value { font-size: 18px; font-weight: 700; margin-top: 4px; }
+  button {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 20px;
+    border-radius: 999px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .input-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+  .input-row input {
+    width: 56px; height: 40px;
+    text-align: center;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+  }
+  .saved-item {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .saved-item:last-child { border-bottom: none; }
+  .status-pill {
+    font-size: 12px; padding: 4px 10px; border-radius: 999px;
+    white-space: nowrap;
+  }
+  .status-pill.pending { background: rgba(154,164,178,0.15); color: var(--muted); }
+  .status-pill.win { background: rgba(76,217,100,0.15); color: var(--good); }
+  .status-pill.lose { background: rgba(255,92,92,0.1); color: var(--bad); }
+  .delete-btn {
+    background: none; border: none; color: var(--muted);
+    font-size: 12px; padding: 4px 8px; cursor: pointer;
+  }
+  .delete-btn:hover { color: var(--bad); }
+  #status { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>로또 번호 생성기 &amp; 당첨 확인</h1>
+  <p class="sub">동행복권 공식 회차 데이터 기준 (data/lotto_history.json)</p>
+
+  <div class="card">
+    <h3>최신 회차 당첨결과</h3>
+    <div id="latestDrawInfo">불러오는 중...</div>
+  </div>
+
+  <div class="card">
+    <h3>번호 뽑기</h3>
+    <div class="ball-row" id="generateRow" style="min-height: 42px; margin-bottom: 14px;"></div>
+    <button id="generateBtn" type="button">랜덤 번호 뽑기</button>
+    <button id="saveGeneratedBtn" type="button" disabled>이 번호 저장하기</button>
+  </div>
+
+  <div class="card">
+    <h3>번호 직접 입력해서 저장</h3>
+    <div class="input-row" id="manualInputs"></div>
+    <button id="saveManualBtn" type="button">저장하기</button>
+    <p id="manualError" style="color: var(--bad); font-size: 12px; margin: 6px 0 0;"></p>
+  </div>
+
+  <div class="card">
+    <h3>내가 저장한 번호</h3>
+    <div id="savedList"></div>
+  </div>
+
+  <p id="status">불러오는 중...</p>
+
+<script>
+const BALL_COLORS = [
+  { bg: '#FAC775', text: '#412402' },
+  { bg: '#85B7EB', text: '#042C53' },
+  { bg: '#F09595', text: '#501313' },
+  { bg: '#B4B2A9', text: '#2C2C2A' },
+  { bg: '#97C459', text: '#173404' }
+];
+function colorForNumber(n) {
+  if (n <= 10) return BALL_COLORS[0];
+  if (n <= 20) return BALL_COLORS[1];
+  if (n <= 30) return BALL_COLORS[2];
+  if (n <= 40) return BALL_COLORS[3];
+  return BALL_COLORS[4];
+}
+function makeBall(n, mini) {
+  const c = colorForNumber(n);
+  const el = document.createElement('div');
+  el.className = 'ball' + (mini ? ' mini' : '');
+  el.style.background = c.bg;
+  el.style.color = c.text;
+  el.textContent = n;
+  return el;
+}
+function formatWon(n) {
+  return Math.round(n).toLocaleString('ko-KR') + '원';
+}
+
+const STORAGE_KEY = 'my-lotto-numbers';
+function loadSaved() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
+  catch (e) { return []; }
+}
+function saveSaved(list) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+}
+
+function rankOf(picked, draw) {
+  const pickedSet = new Set(picked);
+  const matchCount = draw.numbers.filter(n => pickedSet.has(n)).length;
+  const bonusMatch = pickedSet.has(draw.bonus);
+  if (matchCount === 6) return 1;
+  if (matchCount === 5 && bonusMatch) return 2;
+  if (matchCount === 5) return 3;
+  if (matchCount === 4) return 4;
+  if (matchCount === 3) return 5;
+  return 0;
+}
+const RANK_LABEL = { 0: '낙첨', 1: '1등', 2: '2등', 3: '3등', 4: '4등', 5: '5등' };
+
+let historyData = { draws: [] };
+let latestDrawNo = 0;
+
+async function load() {
+  const statusEl = document.getElementById('status');
+  try {
+    const res = await fetch('./data/lotto_history.json?_=' + Date.now());
+    if (!res.ok) throw new Error('lotto_history.json 로드 실패: ' + res.status);
+    historyData = await res.json();
+    historyData.draws.sort((a, b) => a.drwNo - b.drwNo);
+    latestDrawNo = historyData.draws.length ? historyData.draws[historyData.draws.length - 1].drwNo : 0;
+    renderLatestDraw();
+    checkAndRenderSaved();
+    statusEl.textContent = '마지막 새로고침: ' + new Date().toLocaleString('ko-KR');
+  } catch (e) {
+    statusEl.textContent = '오류: ' + e.message;
+  }
+}
+
+function renderLatestDraw() {
+  const el = document.getElementById('latestDrawInfo');
+  if (!historyData.draws.length) {
+    el.textContent = '아직 데이터가 없어요. GitHub Actions가 첫 실행되면 채워집니다.';
+    return;
+  }
+  const latest = historyData.draws[historyData.draws.length - 1];
+  el.innerHTML = '';
+
+  const header = document.createElement('p');
+  header.style.cssText = 'color:var(--muted); font-size:13px; margin:0 0 12px;';
+  header.textContent = `${latest.drwNo}회 (${latest.date} 추첨)`;
+  el.appendChild(header);
+
+  const row = document.createElement('div');
+  row.className = 'ball-row';
+  latest.numbers.forEach(n => row.appendChild(makeBall(n, false)));
+  const plus = document.createElement('span');
+  plus.className = 'plus';
+  plus.textContent = '+';
+  row.appendChild(plus);
+  row.appendChild(makeBall(latest.bonus, false));
+  el.appendChild(row);
+
+  const prizeRow = document.createElement('div');
+  prizeRow.className = 'prize-row';
+  prizeRow.innerHTML = `
+    <div class="prize-stat">
+      <div class="label">1등 당첨자 수</div>
+      <div class="value">${latest.firstWinnerCount.toLocaleString('ko-KR')}명</div>
+    </div>
+    <div class="prize-stat">
+      <div class="label">1등 1인당 당첨금</div>
+      <div class="value">${formatWon(latest.firstPrizePerWinner)}</div>
+    </div>
+    <div class="prize-stat">
+      <div class="label">1등 총 당첨금</div>
+      <div class="value">${formatWon(latest.firstTotalPrize)}</div>
+    </div>
+  `;
+  el.appendChild(prizeRow);
+}
+
+function checkAndRenderSaved() {
+  const saved = loadSaved();
+  let changed = false;
+  saved.forEach(item => {
+    if (item.rank === undefined && item.targetDrwNo <= latestDrawNo) {
+      const draw = historyData.draws.find(d => d.drwNo === item.targetDrwNo);
+      if (draw) {
+        item.rank = rankOf(item.numbers, draw);
+        changed = true;
+      }
+    }
+  });
+  if (changed) saveSaved(saved);
+  renderSavedList(saved);
+}
+
+function renderSavedList(saved) {
+  const container = document.getElementById('savedList');
+  container.innerHTML = '';
+  if (!saved.length) {
+    container.innerHTML = '<p style="color:var(--muted); font-size:13px;">아직 저장한 번호가 없어요.</p>';
+    return;
+  }
+  saved.slice().reverse().forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'saved-item';
+
+    const ballWrap = document.createElement('div');
+    ballWrap.className = 'ball-row';
+    item.numbers.slice().sort((a, b) => a - b).forEach(n => ballWrap.appendChild(makeBall(n, true)));
+
+    const rightWrap = document.createElement('div');
+    rightWrap.style.cssText = 'display:flex; align-items:center; gap:10px;';
+
+    const targetLabel = document.createElement('span');
+    targetLabel.style.cssText = 'font-size:12px; color:var(--muted);';
+    targetLabel.textContent = `${item.targetDrwNo}회 대상`;
+
+    const pill = document.createElement('span');
+    if (item.rank === undefined) {
+      pill.className = 'status-pill pending';
+      pill.textContent = '추첨 대기중';
+    } else if (item.rank === 0) {
+      pill.className = 'status-pill lose';
+      pill.textContent = '낙첨';
+    } else {
+      pill.className = 'status-pill win';
+      pill.textContent = RANK_LABEL[item.rank] + ' 당첨!';
+    }
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'delete-btn';
+    delBtn.textContent = '삭제';
+    delBtn.onclick = () => {
+      const updated = loadSaved().filter(x => x.id !== item.id);
+      saveSaved(updated);
+      renderSavedList(updated);
+    };
+
+    rightWrap.appendChild(targetLabel);
+    rightWrap.appendChild(pill);
+    rightWrap.appendChild(delBtn);
+
+    row.appendChild(ballWrap);
+    row.appendChild(rightWrap);
+    container.appendChild(row);
+  });
+}
+
+function addSavedEntry(numbers) {
+  const saved = loadSaved();
+  saved.push({
+    id: Date.now() + '-' + Math.floor(Math.random() * 1000),
+    numbers,
+    targetDrwNo: latestDrawNo + 1,
+    savedAt: new Date().toISOString(),
+  });
+  saveSaved(saved);
+  renderSavedList(saved);
+}
+
+// ---- 랜덤 번호 뽑기 ----
+let lastGenerated = null;
+document.getElementById('generateBtn').addEventListener('click', () => {
+  const pool = Array.from({ length: 45 }, (_, i) => i + 1);
+  const result = [];
+  for (let i = 0; i < 6; i++) {
+    const idx = Math.floor(Math.random() * pool.length);
+    result.push(pool[idx]);
+    pool.splice(idx, 1);
+  }
+  result.sort((a, b) => a - b);
+  lastGenerated = result;
+
+  const row = document.getElementById('generateRow');
+  row.innerHTML = '';
+  result.forEach(n => row.appendChild(makeBall(n, false)));
+  document.getElementById('saveGeneratedBtn').disabled = false;
+});
+
+document.getElementById('saveGeneratedBtn').addEventListener('click', () => {
+  if (!lastGenerated) return;
+  addSavedEntry(lastGenerated);
+  document.getElementById('saveGeneratedBtn').disabled = true;
+  lastGenerated = null;
+  document.getElementById('generateRow').innerHTML = '';
+});
+
+// ---- 번호 직접 입력 ----
+const manualInputsEl = document.getElementById('manualInputs');
+for (let i = 0; i < 6; i++) {
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.min = '1';
+  input.max = '45';
+  manualInputsEl.appendChild(input);
+}
+
+document.getElementById('saveManualBtn').addEventListener('click', () => {
+  const errorEl = document.getElementById('manualError');
+  const inputs = manualInputsEl.querySelectorAll('input');
+  const numbers = Array.from(inputs).map(inp => parseInt(inp.value, 10));
+
+  if (numbers.some(n => isNaN(n) || n < 1 || n > 45)) {
+    errorEl.textContent = '1부터 45 사이의 숫자를 모두 입력해주세요.';
+    return;
+  }
+  if (new Set(numbers).size !== 6) {
+    errorEl.textContent = '중복되지 않는 숫자 6개를 입력해주세요.';
+    return;
+  }
+  errorEl.textContent = '';
+  addSavedEntry(numbers.sort((a, b) => a - b));
+  inputs.forEach(inp => inp.value = '');
+});
+
+load();
+</script>
+</body>
+</html>
