@@ -58,6 +58,10 @@ def fetch_draw(session, drw_no):
         desc_tag = soup.find("p", class_="desc")
         if desc_tag is None:
             print("desc 태그 없음 -> 아직 추첨되지 않은 회차로 판단")
+            print("최종 응답 URL:", res.url)
+            print("페이지 title:", soup.title.string if soup.title else "(title 없음)")
+            print("응답 앞부분 500자:")
+            print(res.text[:500])
             return None
 
         try:
