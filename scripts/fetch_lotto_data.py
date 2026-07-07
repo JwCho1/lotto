@@ -1,13 +1,19 @@
 import json
 import os
+import re
 import time
 import requests
+from datetime import datetime
+from bs4 import BeautifulSoup
 
 DATA_PATH = os.path.join(
     os.path.dirname(__file__), "..", "data", "lotto_history.json"
 )
-API_URL = "https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={}"
-HOME_URL = "https://www.dhlottery.co.kr/common.do?method=main"
+
+# JSON API(common.do?method=getLottoNumber) 대신, 사람이 보는 일반 결과 페이지를 파싱한다.
+# 클라우드 서버 IP에서 JSON API 호출 시 봇으로 감지되어 홈페이지로 리다이렉트되는
+# 문제가 있어, 검색엔진에도 노출되는 이 페이지로 우회한다.
+RESULT_URL = "https://www.dhlottery.co.kr/gameResult.do?method=byWin&drwNo={}"
 
 HEADERS = {
     "User-Agent": (
@@ -15,10 +21,8 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/138.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/json, text/javascript, */*; q=0.01",
     "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
     "Referer": "https://www.dhlottery.co.kr/gameResult.do?method=byWin",
-    "X-Requested-With": "XMLHttpRequest",
 }
 
 
@@ -35,57 +39,74 @@ def save_history(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def make_session():
-    """
-    동행복권 서버가 세션/쿠키 없는 요청을 봇으로 판단해
-    메인 페이지로 리다이렉트시키는 것으로 보여, 먼저 메인 페이지를
-    한 번 방문해 쿠키를 확보한 뒤 그 세션으로 API를 호출한다.
-    """
-    session = requests.Session()
-    session.headers.update(HEADERS)
-    try:
-        home_res = session.get(HOME_URL, timeout=10)
-        print("세션 초기화 STATUS:", home_res.status_code)
-        print("쿠키:", session.cookies.get_dict())
-    except requests.RequestException as e:
-        print("세션 초기화 실패:", e)
-    return session
+def won_to_int(text):
+    """'83,595,692,700원' 같은 문자열을 정수로 변환"""
+    digits = re.sub(r"[^0-9]", "", text or "")
+    return int(digits) if digits else 0
 
 
 def fetch_draw(session, drw_no):
     try:
-        res = session.get(
-            API_URL.format(drw_no),
-            timeout=10
-        )
+        res = session.get(RESULT_URL.format(drw_no), headers=HEADERS, timeout=10)
         print(f"\n=== 회차 {drw_no} ===")
-        print("URL:", res.url)
-        print("최종 응답 URL(res.url):", res.url)
         print("STATUS:", res.status_code)
-        print("CONTENT-TYPE:", res.headers.get("Content-Type"))
         res.raise_for_status()
+
+        soup = BeautifulSoup(res.text, "lxml")
+
+        # 날짜 파싱 실패 = 아직 추첨 안 된 회차(또는 페이지가 없음)로 간주하고 중단
+        desc_tag = soup.find("p", class_="desc")
+        if desc_tag is None:
+            print("desc 태그 없음 -> 아직 추첨되지 않은 회차로 판단")
+            return None
+
         try:
-            payload = res.json()
-        except Exception:
-            print("JSON 파싱 실패")
-            print("응답 내용 앞부분:")
-            print(res.text[:500])
+            date_obj = datetime.strptime(desc_tag.text.strip(), "(%Y년 %m월 %d일 추첨)")
+        except ValueError:
+            print("날짜 파싱 실패:", desc_tag.text)
             return None
-        if payload.get("returnValue") != "success":
-            print("returnValue != success:", payload)
+
+        win_div = soup.find("div", class_="num win")
+        bonus_div = soup.find("div", class_="num bonus")
+        if win_div is None or bonus_div is None:
+            print("당첨번호/보너스 영역을 찾을 수 없음")
             return None
+
+        numbers = [int(x) for x in win_div.find("p").text.strip().split("\n") if x.strip()]
+        bonus = int(bonus_div.find("p").text.strip())
+
+        if len(numbers) != 6:
+            print("당첨번호 개수 이상:", numbers)
+            return None
+
+        # 순위별 당첨금액 표 파싱 (1등 정보만 사용)
+        first_prize_total = 0
+        first_prize_per_winner = 0
+        first_winner_count = 0
+
+        table = soup.find("table", class_="tbl_data_col")
+        if table:
+            first_row = table.find("tbody").find("tr")
+            cells = first_row.find_all("td")
+            # cells[0]: 순위, cells[1]: 총 당첨금액, cells[2]: 당첨게임 수, cells[3]: 1게임당 당첨금액
+            first_prize_total = won_to_int(cells[1].get_text())
+            first_winner_count = int(re.sub(r"[^0-9]", "", cells[2].get_text()) or 0)
+            first_prize_per_winner = won_to_int(cells[3].get_text())
+
         return {
-            "drwNo": payload["drwNo"],
-            "date": payload["drwNoDate"],
-            "numbers": [payload[f"drwtNo{i}"] for i in range(1, 7)],
-            "bonus": payload["bnusNo"],
-            "firstPrizePerWinner": payload["firstWinamnt"],
-            "firstWinnerCount": payload["firstPrzwnerCo"],
-            "firstTotalPrize": payload["firstAccumamnt"],
-            "totalSales": payload["totSellamnt"],
+            "drwNo": drw_no,
+            "date": date_obj.strftime("%Y-%m-%d"),
+            "numbers": numbers,
+            "bonus": bonus,
+            "firstPrizePerWinner": first_prize_per_winner,
+            "firstWinnerCount": first_winner_count,
+            "firstTotalPrize": first_prize_total,
         }
     except requests.RequestException as e:
         print("요청 실패:", e)
+        return None
+    except Exception as e:
+        print("파싱 중 예외:", e)
         return None
 
 
@@ -94,22 +115,14 @@ def main():
     existing_nos = {d["drwNo"] for d in history["draws"]}
     start_no = max(existing_nos) + 1 if existing_nos else 1
 
-    session = make_session()
+    session = requests.Session()
 
     new_draws = []
     no = start_no
-    fail_count = 0
     while True:
         draw = fetch_draw(session, no)
         if draw is None:
-            fail_count += 1
-            # 세션 문제일 수도 있으니 한 번 세션을 새로 만들어서 재시도
-            if fail_count == 1:
-                print(">> 세션을 새로 만들어 1회 재시도합니다.")
-                session = make_session()
-                draw = fetch_draw(session, no)
-            if draw is None:
-                break
+            break
         new_draws.append(draw)
         no += 1
         time.sleep(0.5)
