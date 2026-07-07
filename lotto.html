@@ -39,8 +39,34 @@
     border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
     font-size: 15px; font-weight: 700;
+    position: relative;
+    transform: scale(1);
   }
   .ball.mini { width: 30px; height: 30px; font-size: 12px; }
+
+  /* ---- 뽑기 애니메이션 ---- */
+  .ball.rolling {
+    animation: rollPulse 0.12s linear infinite;
+  }
+  @keyframes rollPulse {
+    0%   { transform: scale(1) rotate(0deg); }
+    50%  { transform: scale(0.92) rotate(8deg); }
+    100% { transform: scale(1) rotate(0deg); }
+  }
+  .ball.settle {
+    animation: settlePop 0.45s cubic-bezier(.34,1.56,.64,1);
+  }
+  @keyframes settlePop {
+    0%   { transform: scale(0.5); opacity: 0.4; }
+    60%  { transform: scale(1.15); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  .ball.placeholder {
+    background: var(--bg) !important;
+    border: 2px dashed var(--border);
+    color: var(--muted) !important;
+  }
+
   .plus { color: var(--muted); font-size: 18px; margin: 0 2px; }
   .prize-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
   .prize-stat {
@@ -148,8 +174,17 @@ function makeBall(n, mini) {
   el.textContent = n;
   return el;
 }
+function makePlaceholderBall() {
+  const el = document.createElement('div');
+  el.className = 'ball placeholder';
+  el.textContent = '?';
+  return el;
+}
 function formatWon(n) {
   return Math.round(n).toLocaleString('ko-KR') + '원';
+}
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 const STORAGE_KEY = 'my-lotto-numbers';
@@ -317,9 +352,13 @@ function addSavedEntry(numbers) {
   renderSavedList(saved);
 }
 
-// ---- 랜덤 번호 뽑기 ----
+// ---- 랜덤 번호 뽑기 (애니메이션 포함) ----
 let lastGenerated = null;
-document.getElementById('generateBtn').addEventListener('click', () => {
+const generateBtn = document.getElementById('generateBtn');
+const saveGeneratedBtn = document.getElementById('saveGeneratedBtn');
+const generateRow = document.getElementById('generateRow');
+
+function pickSixNumbers() {
   const pool = Array.from({ length: 45 }, (_, i) => i + 1);
   const result = [];
   for (let i = 0; i < 6; i++) {
@@ -328,20 +367,60 @@ document.getElementById('generateBtn').addEventListener('click', () => {
     pool.splice(idx, 1);
   }
   result.sort((a, b) => a - b);
-  lastGenerated = result;
+  return result;
+}
 
-  const row = document.getElementById('generateRow');
-  row.innerHTML = '';
-  result.forEach(n => row.appendChild(makeBall(n, false)));
-  document.getElementById('saveGeneratedBtn').disabled = false;
+generateBtn.addEventListener('click', async () => {
+  generateBtn.disabled = true;
+  saveGeneratedBtn.disabled = true;
+  lastGenerated = null;
+
+  const finalNumbers = pickSixNumbers();
+
+  // 1) 슬롯 6개 준비 (물음표 placeholder + 굴러가는 애니메이션)
+  generateRow.innerHTML = '';
+  const slots = [];
+  for (let i = 0; i < 6; i++) {
+    const slot = makePlaceholderBall();
+    slot.classList.add('rolling');
+    generateRow.appendChild(slot);
+    slots.push(slot);
+  }
+
+  // 2) 슬롯마다 랜덤 숫자가 빠르게 깜빡이도록(룰렛 느낌) 잠깐 회전
+  const spinTimers = slots.map(slot => setInterval(() => {
+    slot.textContent = Math.floor(Math.random() * 45) + 1;
+  }, 60));
+
+  await sleep(700);
+
+  // 3) 하나씩 순서대로 확정 숫자로 "착지"시키기
+  for (let i = 0; i < 6; i++) {
+    clearInterval(spinTimers[i]);
+    const n = finalNumbers[i];
+    const c = colorForNumber(n);
+    const slot = slots[i];
+
+    slot.classList.remove('rolling', 'placeholder');
+    slot.style.background = c.bg;
+    slot.style.color = c.text;
+    slot.textContent = n;
+    slot.classList.add('settle');
+
+    await sleep(180);
+  }
+
+  lastGenerated = finalNumbers;
+  generateBtn.disabled = false;
+  saveGeneratedBtn.disabled = false;
 });
 
-document.getElementById('saveGeneratedBtn').addEventListener('click', () => {
+saveGeneratedBtn.addEventListener('click', () => {
   if (!lastGenerated) return;
   addSavedEntry(lastGenerated);
-  document.getElementById('saveGeneratedBtn').disabled = true;
+  saveGeneratedBtn.disabled = true;
   lastGenerated = null;
-  document.getElementById('generateRow').innerHTML = '';
+  generateRow.innerHTML = '';
 });
 
 // ---- 번호 직접 입력 ----
