@@ -216,6 +216,9 @@ async function load() {
     latestDrawNo = historyData.draws.length ? historyData.draws[historyData.draws.length - 1].drwNo : 0;
     renderLatestDraw();
     checkAndRenderSaved();
+    statusEl.textContent = '마지막 새로고침: ' + new Date().toLocaleString('ko-KR');
+  } catch (e) {
+    statusEl.textContent = '오류: ' + e.message;
   }
 }
 
